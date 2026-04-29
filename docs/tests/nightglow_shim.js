@@ -213,6 +213,39 @@
     }, 4000);
   });
 
+  // ---------- Probe 4b: MessagePort.addEventListener('message') auto-start ----------
+  // Per WHATWG HTML, only assigning to .onmessage implicitly starts the port.
+  // Per *every shipping browser*, addEventListener('message', ...) also starts
+  // it. Telegram K's worker uses addEventListener and never calls start().
+  await new Promise(function (resolve) {
+    var c = new MessageChannel();
+    var settled = false;
+    c.port2.addEventListener('message', function (e) {
+      if (settled) return; settled = true;
+      row({
+        name: 'main: port.addEventListener("message") auto-starts',
+        verdict: 'ok',
+        actual: { data: e.data },
+        expected: 'listener fires with delivered data',
+      });
+      resolve();
+    });
+    // Note: we do NOT call c.port2.start() — the question is whether
+    // addEventListener alone implicitly enables the queue.
+    c.port1.postMessage('autostart-probe');
+    setTimeout(function () {
+      if (settled) return; settled = true;
+      row({
+        name: 'main: port.addEventListener("message") auto-starts',
+        verdict: 'leak',
+        actual: 'silent for 1.5s',
+        expected: 'listener fires with delivered data',
+        note: 'Real Chrome auto-starts the port queue on addEventListener("message"). Servo only auto-starts on onmessage = ... — Telegram K relies on the addEventListener path and hangs without this fix.',
+      });
+      resolve();
+    }, 1500);
+  });
+
   // ---------- Probe 5: navigator.locks ----------
   row({
     name: 'main: typeof navigator.locks',
