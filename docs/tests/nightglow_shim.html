@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+  <link rel="icon" href="../favicon.ico">
+  <link rel="stylesheet" href="../style.min.css">
+  <title>Nightglow Shim Probes | CreepJS Fork</title>
+  <style>
+    body { font-family: monospace; padding: 16px; }
+    h1 { font-size: 18px; }
+    .row { display: grid; grid-template-columns: 320px 80px 1fr; gap: 8px; padding: 4px 0; border-bottom: 1px solid #eee; }
+    .leak { background: #fee; }
+    .ok { background: #efe; }
+    .unknown { background: #ffe; }
+    .muted { color: #888; }
+    pre { white-space: pre-wrap; word-break: break-all; margin: 0; font-size: 11px; }
+  </style>
+</head>
+<body>
+  <h1>Nightglow shim probes</h1>
+  <p class="muted">
+    Each row exercises a fingerprint surface that Nightglow's SharedWorker /
+    navigator.locks / ServiceWorkerContainer shims influence. We report
+    <strong>actual</strong> vs <strong>expected</strong> values and flag
+    anything a real Chrome wouldn't produce. Use this page to track shim
+    drift over time. Forked from CreepJS — separate test page so it can
+    evolve independently.
+  </p>
+  <div id="results">
+    <div class="row muted"><div>probe</div><div>verdict</div><div>detail</div></div>
+  </div>
+  <p id="summary" class="muted">running…</p>
+  <script src="nightglow_shim.js"></script>
+</body>
+</html>
