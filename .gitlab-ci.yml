@@ -4,10 +4,20 @@
 #   - orderout_k8s/argocd/orderout/CreepJS (in-cluster deployment)
 #   - orderout/nightglow .gitlab-ci.yml (fingerprint + creepjs test stages
 #     point Nightglow at http://creepjs.orderout.svc.cluster.local)
+#
+# `workflow.rules` overrides Auto DevOps. Without it, GitLab merges its
+# default `build` job into our pipeline; the auto-DevOps `build` is a
+# Heroku-buildpack stub that exits in ~25s and clobbers ours by job name.
+# Symptom: our docker build never runs, the image is never pushed, and
+# the cluster stays on the previous `:latest` digest forever.
+workflow:
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+
 stages:
   - build
 
-build:
+docker-build:
   stage: build
   image: docker:27
   services:
@@ -26,6 +36,4 @@ build:
         .
     - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
     - docker push $CI_REGISTRY_IMAGE:latest
-  rules:
-    - if: $CI_COMMIT_BRANCH == "main"
   timeout: 10m
