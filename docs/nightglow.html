@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nightglow extensions — creepjs fork</title>
+<link rel="stylesheet" href="style.min.css">
+<style>
+  body { padding: 24px; max-width: 960px; margin: 0 auto; line-height: 1.6; }
+  h1 { margin-bottom: 4px; }
+  .subhead { color: #888; margin-top: 0; margin-bottom: 24px; }
+  .block { background: #1a1a1a; padding: 18px 22px; border-radius: 4px; margin: 18px 0; border-left: 4px solid #3498db; }
+  .block.warn { border-left-color: #e67e22; }
+  .probe { background: #161616; padding: 18px 22px; margin: 16px 0; border-radius: 4px; }
+  .probe h3 { margin-top: 0; }
+  .probe a.run { display: inline-block; padding: 8px 16px; background: #3498db; color: white; border-radius: 4px; text-decoration: none; margin-top: 8px; }
+  .probe a.run:hover { background: #2980b9; }
+  code { background: #000; padding: 2px 6px; border-radius: 3px; font-size: 14px; }
+  pre { background: #000; padding: 12px; border-radius: 4px; overflow-x: auto; font-size: 13px; }
+  .meta { color: #888; font-size: 13px; }
+  a { color: #3498db; }
+</style>
+</head>
+<body>
+
+<h1>Nightglow extensions</h1>
+<p class="subhead">A fork of <a href="https://github.com/abrahamjuliot/creepjs">abrahamjuliot/creepjs</a> with probes added for the <a href="https://gitlab.noogoo.ch/orderout/nightglow">Nightglow</a> stealth browser. Source: <a href="https://gitlab.noogoo.ch/orderout/creepjs">gitlab.noogoo.ch/orderout/creepjs</a>.</p>
+
+<div class="block">
+<h2 style="margin-top:0">Why this fork exists</h2>
+<p>Upstream creepjs is excellent at "is this navigator object lying" — but it
+reads identity attributes from one place: <code>window.navigator</code> on the page.
+A spoof that patches only the page-side passes upstream's checks while still
+leaking through Worker contexts, iframes, and the request headers the
+server actually receives. The probes added in this fork target those
+secondary surfaces specifically, because that's what production detectors
+(Telegram, Cloudflare, Akamai-grade fingerprinters) actually use to flag
+inconsistent UAs.</p>
+<p>The fork adds an <code>openresty</code> base image with a Lua-backed <code>/echo</code> endpoint
+so probes can compare JS-side claims against wire-level reality without
+needing an external service. <a href="/echo">Try /echo</a> directly to see what
+the server received from your current request.</p>
+</div>
+
+<h2>Probes added by this fork</h2>
+
+<div class="probe">
+<h3><a href="tests/nightglow_consistency.html">→ Nightglow consistency probes</a></h3>
+<p>Reads the same identity attributes (UA, userAgentData, platform, language,
+languages, vendor, hardwareConcurrency, deviceMemory, webdriver,
+constructor.name) from <strong>five contexts</strong>:</p>
+<ul>
+<li><code>page</code> — top-level <code>window.navigator</code></li>
+<li><code>dedicated</code> — DedicatedWorker via blob: URL</li>
+<li><code>shared</code> — SharedWorker via blob: URL (catches Nightglow's D9 — our shim runs user code inside <code>DedicatedWorkerGlobalScope</code>, so <code>self.constructor.name</code> leaks the real engine)</li>
+<li><code>serviceWorker</code> — best-effort registration (skipped on plain HTTP)</li>
+<li><code>iframe</code> — same-origin iframe via <code>srcdoc</code></li>
+<li><code>server</code> — derived from <code>/echo</code> (Sec-CH-UA → brand list, etc.)</li>
+</ul>
+<p>Each row is green if all contexts agree, red if any cell disagrees. Naive
+UA spoofs that only patch <code>window.navigator</code> light up the worker /
+iframe / server columns immediately. The same page also runs the
+<strong>modern Chrome API surface</strong> existence checks and the
+<strong>timer + async stack format</strong> probes (timer precision, Chrome-style
+"at async" frames in error stacks).</p>
+<a class="run" href="tests/nightglow_consistency.html">Run consistency probes</a>
+<p class="meta">Added: 2026-05-01 · Tier 1+2+3 of the brainstorm in nightglow/docs/defects/fingerprint-gaps.md</p>
+</div>
+
+<div class="probe">
+<h3><a href="tests/nightglow_shim.html">→ Nightglow shim probes (existing)</a></h3>
+<p>The original fork additions, focused on Nightglow's
+<strong>Servo-side shim correctness</strong>: SharedWorker constructor returns a working
+worker; the wrapper synthesizes a <code>connect</code> event with both
+<code>e.source</code> and <code>e.ports[0]</code>; <code>SharedWorkerGlobalScope</code> is aliased so
+<code>typeof</code> checks succeed; module-type wrappers buffer messages until
+<code>import()</code> resolves; <code>navigator.locks.request</code> invokes its callback;
+<code>ServiceWorkerContainer.{ready, getRegistration, getRegistrations}</code>
+exist; <code>MessagePort.addEventListener('message')</code> auto-starts the queue.</p>
+<p>These map 1:1 to the D-numbered defects in
+<a href="https://gitlab.noogoo.ch/orderout/nightglow/-/blob/main/docs/defects/telegram.md">nightglow/docs/defects/telegram.md</a>.
+Each "leak" reading on this page corresponds to a specific Servo gap that
+breaks Telegram K's boot path.</p>
+<a class="run" href="tests/nightglow_shim.html">Run shim probes</a>
+<p class="meta">Added: 2026-04-29 (commits 5fe4da3, 08b6b45)</p>
+</div>
+
+<div class="probe">
+<h3><a href="/">→ Upstream creepjs UI</a></h3>
+<p>The unmodified abrahamjuliot/creepjs index page is still served at the
+root for the standard fingerprint scoring (canvas, WebGL, audio, fonts,
+trash, lies counts, etc.). Open if you want the headline "X% like
+headless" verdict.</p>
+<a class="run" href="/">Open creepjs UI</a>
+</div>
+
+<h2>Endpoints added</h2>
+<div class="block">
+<p><code>GET /echo</code> — returns the request's method, URI, scheme, remote
+address, and full request headers (lower-cased keys; repeated headers as
+arrays) as JSON. Backed by an openresty Lua block (~15 lines, see
+<code>nightglow.conf</code> in the repo).</p>
+<pre>$ curl -s http://creepjs.orderout.svc.cluster.local/echo | jq .
+{
+  "method": "GET",
+  "uri": "/echo",
+  "scheme": "http",
+  "remote_addr": "10.42.0.123",
+  "server_addr": "10.42.0.251",
+  "headers": {
+    "host": "creepjs.orderout.svc.cluster.local",
+    "user-agent": "Mozilla/5.0 ...",
+    "accept-language": "en-US,en;q=0.9",
+    "sec-ch-ua": "\"Chromium\";v=\"124\", ...",
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": "\"Windows\""
+  }
+}</pre>
+</div>
+
+<h2>Where the fork lives</h2>
+<div class="block">
+<ul>
+<li><strong>Canonical:</strong> <a href="https://gitlab.noogoo.ch/orderout/creepjs">gitlab.noogoo.ch/orderout/creepjs</a> (drives the CI build that produces this image)</li>
+<li><strong>Public mirror:</strong> <a href="https://github.com/demian-overflow/creepjs">github.com/demian-overflow/creepjs</a></li>
+<li><strong>Submodule:</strong> <code>BrowserAutomation/creepjs/</code> in the orderout monorepo</li>
+<li><strong>Image:</strong> <code>registry.noogoo.ch/orderout/creepjs:latest</code></li>
+<li><strong>Deployment:</strong> ArgoCD app <code>creepjs</code> in <code>orderout</code> namespace, manifests at <code>orderout_k8s/argocd/orderout/CreepJS/</code></li>
+</ul>
+</div>
+
+</body>
+</html>

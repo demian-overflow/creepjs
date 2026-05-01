@@ -1,12 +1,43 @@
-# CreepJS™
+# CreepJS™ — Nightglow fork
+
+> **This is a fork.** Canonical: [`gitlab.noogoo.ch/orderout/creepjs`](https://gitlab.noogoo.ch/orderout/creepjs) · Public mirror: [`github.com/demian-overflow/creepjs`](https://github.com/demian-overflow/creepjs) · Upstream: [`abrahamjuliot/creepjs`](https://github.com/abrahamjuliot/creepjs).
+>
+> The fork adds probes targeted at the [Nightglow](https://gitlab.noogoo.ch/orderout/nightglow) Servo-derived stealth browser. **Read [`docs/nightglow.html`](docs/nightglow.html)** (or visit `/nightglow.html` on the deployed site) for the catalogue and rationale.
+
+## Nightglow extensions (this fork only)
+
+Beyond upstream creepjs:
+
+| Probe | What it catches |
+|---|---|
+| [`docs/tests/nightglow_consistency.html`](docs/tests/nightglow_consistency.html) | Identity attributes (UA, userAgentData, platform, languages, …) read from page / DedicatedWorker / SharedWorker / ServiceWorker / iframe / server (`/echo`). Diffs across contexts; flags any divergence. Catches naive shims that only patch `window.navigator`. Same page also runs modern-API surface checks (IdleDetector, WebGPU, PressureObserver, CookieStore, ViewTransitions, etc.) and timer/stack-format probes. |
+| [`docs/tests/nightglow_shim.html`](docs/tests/nightglow_shim.html) | Servo shim correctness for SharedWorker / Web Locks / ServiceWorkerContainer / MessagePort auto-start. Each leak maps to a D-numbered defect in `nightglow/docs/defects/telegram.md`. |
+| `GET /echo` (openresty Lua endpoint) | JSON of request method, URI, scheme, remote_addr, server_addr, and full request headers. Backs the consistency-probe server column. |
+
+The image base is therefore `openresty/openresty:1.25.3.1-alpine` instead
+of plain nginx — the Lua block in `nightglow.conf` is what serves `/echo`.
+
+## Build / deploy
+
+```bash
+docker build -t registry.noogoo.ch/orderout/creepjs:latest .
+docker push registry.noogoo.ch/orderout/creepjs:latest
+```
+
+CI does this automatically on push to `main` (see `.gitlab-ci.yml`). The
+ArgoCD app `creepjs` in `orderout` namespace pulls `:latest` with
+`imagePullPolicy: Always`.
+
+---
+
+## Upstream CreepJS notice
 
 > [!CAUTION]
-> **SECURITY ALERT: EXTERNAL DOMAINS ARE UNSAFE**
+> **The original upstream's only official live deployment is on GitHub Pages.**
+> Any `.org`, `.com`, or custom domain claiming to be the upstream public CreepJS is an **unauthorized mirror** and should be treated as a malicious honeypot designed to steal your fingerprint data. (Internal Nightglow deployment at `creepjs.orderout.svc.cluster.local` is this fork, not the public site.)
 >
-> **The ONLY official live deployment is on GitHub Pages.**
-> Any `.org`, `.com`, or custom domain claiming to be CreepJS is an **unauthorized mirror** and should be treated as a malicious honeypot designed to steal your fingerprint data.
->
-> * ✅ **Official:** `https://abrahamjuliot.github.io/creepjs`
+> * ✅ **Upstream official:** `https://abrahamjuliot.github.io/creepjs`
+> * ✅ **This fork (internal):** `creepjs.orderout.svc.cluster.local` and the gitlab/github mirrors above
 > * ❌ **Unsafe:** All other URLs.
 
 [https://abrahamjuliot.github.io/creepjs](https://abrahamjuliot.github.io/creepjs)

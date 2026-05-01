@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nightglow consistency probes</title>
+<link rel="stylesheet" href="../style.min.css">
+<style>
+  body { padding: 20px; max-width: 1200px; margin: 0 auto; }
+  h1 { margin-bottom: 8px; }
+  .lede {
+    background: #1a1a1a; padding: 16px; border-left: 4px solid #3498db;
+    margin: 16px 0;
+  }
+  .lede code { background: #000; padding: 2px 4px; border-radius: 3px; }
+  .lede a { color: #3498db; }
+  table {
+    border-collapse: collapse; width: 100%; margin: 24px 0;
+    font-family: 'JetBrains Mono', Consolas, monospace; font-size: 13px;
+  }
+  th, td {
+    border: 1px solid #333; padding: 6px 10px; text-align: left;
+    vertical-align: top; word-break: break-word;
+  }
+  th { background: #1f1f1f; }
+  td.attr { font-weight: bold; background: #161616; white-space: nowrap; }
+  .ok    { color: #2ecc71; }
+  .leak  { color: #e74c3c; font-weight: bold; }
+  .skip  { color: #888; font-style: italic; }
+  .summary {
+    padding: 16px; margin: 16px 0; border-radius: 4px;
+    background: #1a1a1a;
+  }
+  .summary.allok { border-left: 4px solid #2ecc71; }
+  .summary.leak  { border-left: 4px solid #e74c3c; }
+  details { margin: 8px 0; }
+  details summary { cursor: pointer; padding: 4px 0; }
+  pre { background: #000; padding: 8px; overflow-x: auto; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<h1>Nightglow consistency probes</h1>
+<p><a href="../nightglow.html">← back to Nightglow probe index</a></p>
+
+<div class="lede">
+<p><strong>Why this exists.</strong> Upstream creepjs reads identity attributes from
+<code>window.navigator</code> in the page context. A browser that spoofs only
+the page-side navigator (most fingerprint-evasion frameworks) passes those
+checks. Real-world detectors at Telegram / Cloudflare / Akamai-grade do not
+stop there — they cross-check the same attribute against a Worker context,
+an iframe, and the request headers their server actually receives. Any
+divergence is a strong "this UA is lying" signal.</p>
+<p>This page reads <code>navigator</code>-derived identity from <strong>five contexts</strong> and
+diffs them against each other and against <code>/echo</code> (an openresty endpoint
+on this host that returns the headers the server saw). Per-row red means
+that attribute disagrees somewhere — your shim missed a context. See
+<a href="https://gitlab.noogoo.ch/orderout/nightglow/-/blob/main/docs/defects/fingerprint-gaps.md">nightglow/docs/defects/fingerprint-gaps.md</a>
+for the rationale and what to do about each leak.</p>
+</div>
+
+<div id="summary" class="summary">Running probes…</div>
+
+<h2>Identity attributes per context</h2>
+<div id="results"></div>
+
+<h2>Modern Chrome API surface</h2>
+<p>Existence checks for APIs Chrome 90+ exposes. A "Chrome 124" UA that
+returns <code>undefined</code> for any of these is suspicious to detectors that probe
+the version-coherent surface. Doesn't fail per se — informational.</p>
+<div id="modern-apis"></div>
+
+<h2>Timer + stack format</h2>
+<p>High-precision <code>performance.now()</code> in a cross-origin context, or an
+async stack trace whose frames don't match Chrome's format, is a tell that
+something below the JS surface is wrong.</p>
+<div id="timing"></div>
+
+<h2>Raw collected data</h2>
+<details>
+<summary>Click to expand the full per-context navigator dumps + /echo response</summary>
+<pre id="raw"></pre>
+</details>
+
+<script src="nightglow_consistency.js"></script>
+</body>
+</html>
