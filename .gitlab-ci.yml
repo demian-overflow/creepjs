@@ -1,0 +1,31 @@
+# CreepJS fork — build the static-asset image and push to the GitLab registry.
+#
+# Consumed by:
+#   - orderout_k8s/argocd/orderout/CreepJS (in-cluster deployment)
+#   - orderout/nightglow .gitlab-ci.yml (fingerprint + creepjs test stages
+#     point Nightglow at http://creepjs.orderout.svc.cluster.local)
+stages:
+  - build
+
+build:
+  stage: build
+  image: docker:27
+  services:
+    - docker:27-dind
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+    DOCKER_BUILDKIT: "1"
+  before_script:
+    - until docker info; do sleep 1; done
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - docker build
+        -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
+        -t $CI_REGISTRY_IMAGE:latest
+        .
+    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
+    - docker push $CI_REGISTRY_IMAGE:latest
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+  timeout: 10m
