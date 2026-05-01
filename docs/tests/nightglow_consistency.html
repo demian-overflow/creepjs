@@ -76,6 +76,16 @@ async stack trace whose frames don't match Chrome's format, is a tell that
 something below the JS surface is wrong.</p>
 <div id="timing"></div>
 
+<h2>Wire-level TLS ClientHello</h2>
+<p>Fetched from <code>https://tlsprobe.orderout.noogoo.ch:8443/</code> — a self-hosted
+Go service that peeks the TLS ClientHello before the handshake completes
+and returns the parsed shape. JS has no direct access to this layer, so
+this is the only way to surface what real-world bot detectors at Cloudflare
+/ Akamai / Telegram-grade actually use to flag spoofed UAs (JA3, JA4, GREASE
+presence, supported_groups). Compared against a baseline captured from a
+real Chrome 124. Red = differs from Chrome 124 in a way that's a known tell.</p>
+<div id="tls"></div>
+
 <h2>Raw collected data</h2>
 <details>
 <summary>Click to expand the full per-context navigator dumps + /echo response</summary>

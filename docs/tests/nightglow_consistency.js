@@ -277,6 +277,7 @@
     render(data);
     runModernApiProbes();
     runTimingProbes();
+    runTLSProbe(data);
     document.getElementById('raw').textContent = JSON.stringify(data, null, 2);
   });
 
@@ -447,6 +448,185 @@
             <td><pre>${escapeHtml(asyncStack.split('\\n').slice(0, 4).join('\\n'))}</pre></td></tr>
       </tbody></table>`;
     })();
+  }
+
+  // ── Wire-level TLS ClientHello (via tlsprobe) ─────────────────────────
+  //
+  // tlsprobe is a Go binary listening on tlsprobe.orderout.noogoo.ch:8443
+  // that peeks the TLS ClientHello before handshake and returns the parsed
+  // shape + JA3 + JA4 as JSON. We fetch it cross-origin (CORS allowed),
+  // then diff each notable field against a Chrome 124 baseline. The
+  // baseline is captured live from a real Chrome 124 by visiting the
+  // tlsprobe URL directly — see docs/nightglow.html for instructions.
+  // We embed the baseline inline so the page works fully offline.
+  const TLS_PROBE_URL = 'https://tlsprobe.orderout.noogoo.ch:8443/';
+  // Keys here are NOT exact-match — they describe what a Chrome 124
+  // ClientHello looks like in shape. Per-connection variation (GREASE
+  // values, exact key_share keys) is masked by comparing the no-grease
+  // hashes and by checking presence rather than equality on volatile fields.
+  const CHROME124_BASELINE = {
+    has_grease:                true,    // Chrome inserts GREASE on every connection
+    expects_x25519_in_groups:  true,    // ID 29
+    expects_p256_in_groups:    true,    // ID 23
+    forbids_mlkem768_group:    true,    // ID 4588 — rustls-only marker
+    expects_h2_alpn:           true,
+    expects_grease_in_groups:  true,    // Chrome puts a GREASE value first in supported_groups
+    expects_grease_in_versions:true,    // and in supported_versions
+    min_extensions_count:      14,      // Chrome ships at least 14 extensions; bare rustls ships 11
+    expects_extensions: [
+      0,     // server_name
+      5,     // status_request
+      10,    // supported_groups
+      11,    // ec_point_formats
+      13,    // signature_algorithms
+      16,    // ALPN
+      18,    // signed_certificate_timestamp
+      23,    // extended_master_secret
+      27,    // compress_certificate
+      35,    // session_ticket
+      43,    // supported_versions
+      45,    // psk_key_exchange_modes
+      51,    // key_share
+      17513, // application_settings (Chrome-specific)
+      65281, // renegotiation_info
+    ],
+    expects_supported_versions_includes_tls13: true,
+  };
+
+  function runTLSProbe(diffData) {
+    const container = document.getElementById('tls');
+    container.innerHTML = '<p class="skip">fetching tlsprobe…</p>';
+    fetch(TLS_PROBE_URL, { credentials: 'omit', cache: 'no-store' })
+      .then(r => r.json())
+      .then(d => renderTLS(d, diffData))
+      .catch(e => {
+        container.innerHTML = `<p class="skip">tlsprobe unreachable: ${escapeHtml(e.message)}.
+          The service lives at <code>${TLS_PROBE_URL}</code>; if you're driving Nightglow
+          inside the cluster make sure it can reach the LoadBalancer node IP on port 8443.</p>`;
+      });
+  }
+
+  function renderTLS(d, diffData) {
+    const ch = d.client_hello || {};
+    const ja3 = d.ja3 || {};
+    const ja4 = d.ja4 || {};
+    const rows = [];
+
+    function row(label, value, status, note) {
+      rows.push({ label, value, status, note });
+    }
+
+    if (d.error) {
+      document.getElementById('tls').innerHTML =
+        `<p class="leak">tlsprobe returned: ${escapeHtml(d.error)}</p>`;
+      return;
+    }
+
+    row('JA3 hash (raw, with GREASE)',  ja3.hash, 'info',
+        'Per-connection unstable on real Chrome — GREASE rotates every connection');
+    row('JA3 hash (no GREASE)',         ja3.hash_no_grease, 'info',
+        'Stable across connections; compare against published Chrome 124 baselines');
+    row('JA4',                          ja4.string, 'info',
+        'FoxIO format. Cipher list sorted before hashing → version-stable');
+
+    // Has GREASE check
+    {
+      const have = !!ch.has_grease;
+      row('GREASE values present',      have ? 'yes' : 'no',
+          have === CHROME124_BASELINE.has_grease ? 'ok' : 'leak',
+          have ? '' : 'LEAK: real Chrome inserts GREASE in cipher/extension/group lists. Absence ⇒ rustls/non-Chrome TLS stack');
+    }
+
+    // Cipher count
+    {
+      const n = (ch.cipher_suites_no_grease || []).length;
+      row('Cipher suite count (no GREASE)', String(n), n >= 8 ? 'ok' : 'leak',
+          n >= 8 ? '' : `Chrome 124 ships ~14-17 ciphers; ${n} is low — possibly minimalist rustls`);
+    }
+
+    // Supported groups: must include X25519 (29) + P-256 (23). Must NOT include MLKEM768 (4588) on Chrome.
+    {
+      const groups = ch.supported_groups || [];
+      const hasX25519 = groups.includes(29);
+      const hasP256   = groups.includes(23);
+      const hasMLKEM  = groups.includes(4588);
+      row('supported_groups: X25519 (29)',     hasX25519 ? 'present' : 'absent', hasX25519 ? 'ok' : 'leak',
+          hasX25519 ? '' : 'LEAK: Chrome 124 always offers X25519');
+      row('supported_groups: P-256 (23)',      hasP256 ? 'present' : 'absent', hasP256 ? 'ok' : 'leak',
+          hasP256 ? '' : 'LEAK: Chrome 124 always offers P-256');
+      row('supported_groups: X25519MLKEM768 (4588)', hasMLKEM ? 'PRESENT' : 'absent', hasMLKEM ? 'leak' : 'ok',
+          hasMLKEM ? 'LEAK: rustls-specific PQC group. Chrome uses X25519Kyber768Draft00 (different codepoint). Strong rustls fingerprint tell.' : '');
+    }
+
+    // ALPN
+    {
+      const alpn = ch.alpn || [];
+      const hasH2 = alpn.includes('h2');
+      row('ALPN protocols',              alpn.join(',') || '(none)', hasH2 ? 'ok' : 'leak',
+          hasH2 ? '' : 'LEAK: Chrome offers h2 in ALPN');
+    }
+
+    // Extension count + presence of Chrome-specific extensions
+    {
+      const extsNoGrease = ch.extensions_no_grease || [];
+      const n = extsNoGrease.length;
+      row('Extension count (no GREASE)', String(n), n >= CHROME124_BASELINE.min_extensions_count ? 'ok' : 'leak',
+          n >= CHROME124_BASELINE.min_extensions_count ? '' : `Chrome 124 ships ≥${CHROME124_BASELINE.min_extensions_count}; ${n} is low — TLS stack is minimalist rustls`);
+
+      const missing = CHROME124_BASELINE.expects_extensions.filter(e => !extsNoGrease.includes(e));
+      const has17513 = extsNoGrease.includes(17513);
+      row('Extension 17513 (application_settings)', has17513 ? 'present' : 'absent', has17513 ? 'ok' : 'leak',
+          has17513 ? '' : 'LEAK: Chrome-specific. Its absence + matching UA = rustls signature');
+      const has27 = extsNoGrease.includes(27);
+      row('Extension 27 (compress_certificate)', has27 ? 'present' : 'absent', has27 ? 'ok' : 'leak',
+          has27 ? '' : 'LEAK: Chrome 124 ships compress_certificate');
+      if (missing.length > 0) {
+        row('Other expected extensions missing', missing.join(', '), 'leak',
+            'Chrome 124 ships these by default; absence narrows TLS-stack identity');
+      }
+    }
+
+    // GREASE-in-groups + GREASE-in-versions positional check
+    {
+      const sg = ch.supported_groups || [];
+      const hasGreaseInGroups = sg.some(g => isGreaseValue(g));
+      row('GREASE in supported_groups', hasGreaseInGroups ? 'yes' : 'no',
+          hasGreaseInGroups === CHROME124_BASELINE.expects_grease_in_groups ? 'ok' : 'leak',
+          hasGreaseInGroups ? '' : 'LEAK: Chrome inserts a GREASE value (e.g. 0x?A?A) at the head of supported_groups');
+      const sv = ch.supported_versions || [];
+      const hasGreaseInVersions = sv.some(v => isGreaseValue(v));
+      row('GREASE in supported_versions', hasGreaseInVersions ? 'yes' : 'no',
+          hasGreaseInVersions === CHROME124_BASELINE.expects_grease_in_versions ? 'ok' : 'leak',
+          hasGreaseInVersions ? '' : 'LEAK: Chrome inserts GREASE in supported_versions');
+    }
+
+    // TLS version
+    {
+      const sv = ch.supported_versions || [];
+      const hasTLS13 = sv.includes(0x0304);
+      row('supported_versions includes TLS 1.3 (0x0304)', hasTLS13 ? 'yes' : 'no', hasTLS13 ? 'ok' : 'leak');
+    }
+
+    // Render
+    let html = '<table><thead><tr><th>check</th><th>value</th><th>note</th></tr></thead><tbody>';
+    for (const r of rows) {
+      const cls = r.status === 'leak' ? 'leak' : (r.status === 'ok' ? 'ok' : 'skip');
+      html += `<tr><td class="attr">${escapeHtml(r.label)}</td>`
+           +  `<td class="${cls}">${escapeHtml(String(r.value || ''))}</td>`
+           +  `<td>${escapeHtml(r.note || '')}</td></tr>`;
+    }
+    html += '</tbody></table>';
+    html += `<details><summary>Full tlsprobe response</summary><pre>${escapeHtml(JSON.stringify(d, null, 2))}</pre></details>`;
+    document.getElementById('tls').innerHTML = html;
+
+    // also stash on diffData so the raw dump at the bottom of the page includes TLS
+    diffData.__tlsprobe = d;
+  }
+
+  function isGreaseValue(v) {
+    // RFC 8701: GREASE values are 0x?A?A pattern, e.g. 0x0A0A, 0x1A1A, ..., 0xFAFA
+    if (typeof v !== 'number') return false;
+    return (v & 0x0F0F) === 0x0A0A;
   }
 
   // ── helpers ──────────────────────────────────────────────────────────
