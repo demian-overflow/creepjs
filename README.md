@@ -13,6 +13,7 @@ Beyond upstream creepjs:
 | [`docs/tests/nightglow_consistency.html`](docs/tests/nightglow_consistency.html) | Identity attributes (UA, userAgentData, platform, languages, …) read from page / DedicatedWorker / SharedWorker / ServiceWorker / iframe / server (`/echo`). Diffs across contexts; flags any divergence. Catches naive shims that only patch `window.navigator`. Same page also runs modern-API surface checks (IdleDetector, WebGPU, PressureObserver, CookieStore, ViewTransitions, etc.) and timer/stack-format probes. |
 | [`docs/tests/nightglow_shim.html`](docs/tests/nightglow_shim.html) | Servo shim correctness for SharedWorker / Web Locks / ServiceWorkerContainer / MessagePort auto-start. Each leak maps to a D-numbered defect in `nightglow/docs/defects/telegram.md`. |
 | `GET /echo` (openresty Lua endpoint) | JSON of request method, URI, scheme, remote_addr, server_addr, and full request headers. Backs the consistency-probe server column. |
+| `GET https://tlsprobe.orderout.noogoo.ch:8443/` (sibling Go service) | JSON of the parsed TLS ClientHello (cipher suites in wire order, extension list, supported_groups with X25519MLKEM768/rustls flagging, signature_schemes, ALPN, supported_versions, key_share groups) plus computed JA3 + JA4 hashes. Backs the Wire-level TLS section in the consistency probe. Source: [`gitlab.noogoo.ch/orderout/tlsprobe`](https://gitlab.noogoo.ch/orderout/tlsprobe). |
 
 The image base is therefore `openresty/openresty:1.25.3.1-alpine` instead
 of plain nginx — the Lua block in `nightglow.conf` is what serves `/echo`.

@@ -68,6 +68,37 @@ iframe / server columns immediately. The same page also runs the
 </div>
 
 <div class="probe">
+<h3>→ Wire-level TLS ClientHello (via tlsprobe)</h3>
+<p>The consistency probe page above includes a <strong>Wire-level TLS</strong> section
+that fetches <a href="https://tlsprobe.orderout.noogoo.ch:8443/"><code>https://tlsprobe.orderout.noogoo.ch:8443/</code></a>
+— a Go service that peeks the TLS ClientHello before the handshake completes
+and returns the parsed shape (cipher suites in wire order, extension list,
+named groups, signature schemes, ALPN, SNI, supported_versions, key_share
+groups) plus computed JA3 + JA4 fingerprints, as JSON.</p>
+<p>JS in a browser cannot see the ClientHello — TLS handshake is below the JS
+layer. This is the only way to surface what production detectors (Telegram,
+Cloudflare, Akamai-grade) actually use to flag spoofed UAs at the wire level.
+Specific leaks the section catches:</p>
+<ul>
+<li><strong>JA3 + JA4 hashes</strong> vs Chrome 124 published baselines</li>
+<li><strong>GREASE absence</strong> in cipher / extension / group / version lists (real Chrome inserts GREASE on every connection; rustls does not)</li>
+<li><strong>X25519MLKEM768 (group 4588) PRESENT</strong> = rustls-specific post-quantum group; Chrome uses a different codepoint (X25519Kyber768Draft00)</li>
+<li><strong>Extension 17513 (application_settings) absent</strong> = not Chrome</li>
+<li><strong>Extension 27 (compress_certificate) absent</strong> = not Chrome 124</li>
+<li><strong>Extension count below ~14</strong> = minimalist non-Chrome TLS stack</li>
+</ul>
+<p>The service is a single ~150 LOC Go binary at
+<a href="https://gitlab.noogoo.ch/orderout/tlsprobe">gitlab.noogoo.ch/orderout/tlsprobe</a>
+(public mirror at <a href="https://github.com/demian-overflow/tlsprobe">github.com/demian-overflow/tlsprobe</a>),
+deployed in-cluster as the <code>tlsprobe</code> ArgoCD app, terminating its own TLS
+on port 8443 (cert-manager via Infomaniak DNS-01). Try it:</p>
+<pre>$ curl -s https://tlsprobe.orderout.noogoo.ch:8443/ | jq .ja3.hash_no_grease
+"&lt;your browser's stable JA3&gt;"</pre>
+<a class="run" href="tests/nightglow_consistency.html#tls">Run TLS probe (in consistency page)</a>
+<p class="meta">Added: 2026-05-01 · Closes the F5 visibility gap from nightglow/docs/defects/fingerprint-gaps.md (didn't fix F5, but now we can <em>see</em> it)</p>
+</div>
+
+<div class="probe">
 <h3><a href="tests/nightglow_shim.html">→ Nightglow shim probes (existing)</a></h3>
 <p>The original fork additions, focused on Nightglow's
 <strong>Servo-side shim correctness</strong>: SharedWorker constructor returns a working
@@ -96,10 +127,14 @@ headless" verdict.</p>
 
 <h2>Endpoints added</h2>
 <div class="block">
-<p><code>GET /echo</code> — returns the request's method, URI, scheme, remote
-address, and full request headers (lower-cased keys; repeated headers as
-arrays) as JSON. Backed by an openresty Lua block (~15 lines, see
+<p><code>GET /echo</code> (this host) — returns the request's method, URI, scheme,
+remote address, and full request headers (lower-cased keys; repeated headers
+as arrays) as JSON. Backed by an openresty Lua block (~15 lines, see
 <code>nightglow.conf</code> in the repo).</p>
+<p><code>GET https://tlsprobe.orderout.noogoo.ch:8443/</code> (sibling service) — returns
+the parsed TLS ClientHello + JA3 + JA4. Separate Go service because TLS
+ClientHello inspection requires raw TCP, which nginx-ingress's TLS
+termination would hide.</p>
 <pre>$ curl -s http://creepjs.orderout.svc.cluster.local/echo | jq .
 {
   "method": "GET",
